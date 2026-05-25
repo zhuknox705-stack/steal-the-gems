@@ -99,23 +99,23 @@ canvas { display:block; border-radius:12px; border:1px solid #2a2f42; cursor:cro
 <h1>4myfriend</h1>
 
 <div id="lobby">
-  <h2 id="lobby-title">创建或加入房间</h2>
+  <h2 id="lobby-title">創建或加入房間</h2>
   <div id="room-row">
-    <input id="room-input" placeholder="输入房间名…" maxlength="20" />
+    <input id="room-input" placeholder="輸入房間名…" maxlength="20" />
     <button class="btn" id="join-btn" onclick="joinRoom()">加入</button>
   </div>
   <div id="share-row">
     <span id="share-link"></span>
-    <button id="copy-btn" onclick="copyLink()">复制链接</button>
+    <button id="copy-btn" onclick="copyLink()">複製鏈接</button>
   </div>
   <div id="players-waiting"></div>
-  <div id="lobby-status">输入房间名后加入</div>
-  <button id="ready-btn" onclick="toggleReady()">✅ 准备好了！</button>
+  <div id="lobby-status">輸入房間名後加入</div>
+  <button id="ready-btn" onclick="toggleReady()">✅ 準備好了！</button>
 </div>
 
 <div id="countdown-screen">
   <div id="countdown-num">3</div>
-  <div id="countdown-label">游戏即将开始…</div>
+  <div id="countdown-label">遊戲即將開始…</div>
 </div>
 
 <div id="game-screen">
@@ -125,12 +125,12 @@ canvas { display:block; border-radius:12px; border:1px solid #2a2f42; cursor:cro
     <span class="pill" id="pill2" style="background:#3a1a0a;color:#fb923c;border:1px solid #ea580c88">P3: 0/3</span>
   </div>
   <canvas id="gc" width="620" height="520"></canvas>
-  <div id="hint">WASD 移动 · 按住鼠标左键靠近宝石拾取 · 松开放下 · 可偷别人收纳点里的宝石！</div>
+  <div id="hint">WASD 移動 · 按住滑鼠左鍵靠近寶石拾取 · 鬆開放下 · 可偷別人收納點裡的寶石！</div>
 </div>
 
 <div id="win-overlay">
-  <div id="win-text">🏆 获胜！</div>
-  <button id="play-again-btn" onclick="location.reload()">再来一局</button>
+  <div id="win-text">🏆 獲勝！</div>
+  <button id="play-again-btn" onclick="location.reload()">再來一局</button>
 </div>
 
 <script>
@@ -183,7 +183,7 @@ function joinRoom() {
   roomName = input;
   document.getElementById('join-btn').disabled = true;
   document.getElementById('room-input').disabled = true;
-  document.getElementById('lobby-status').textContent = '连接中…';
+  document.getElementById('lobby-status').textContent = '連接中…';
 
   const shareUrl = getShareUrl(roomName);
   document.getElementById('share-link').textContent = shareUrl;
@@ -194,35 +194,29 @@ function joinRoom() {
   const connTimeout = setTimeout(() => {
     if (ably.connection.state !== 'connected') {
       document.getElementById('lobby-status').textContent =
-        '⚠️ 连接超时，请尝试直接用浏览器打开游戏链接';
+        '⚠️ 連接超時，請嘗試刷新網頁或更換房間名';
     }
   }, 8000);
 
-  ably.connection.on('connecting', () => {
-    document.getElementById('lobby-status').textContent = '连接中（connecting）…';
-  });
   ably.connection.on('connected', () => {
     clearTimeout(connTimeout);
     myId = ably.options.clientId;
-    channel = ably.channels.get('gems-v2-' + roomName);
+    channel = ably.channels.get('gems-v3-' + roomName);
     channel.presence.subscribe(onPresenceChange);
     channel.subscribe(handleMsg);
     channel.presence.enter({}, err => {
       if (!err) {
         document.getElementById('ready-btn').style.display = 'block';
-        document.getElementById('lobby-title').textContent = '房间：' + roomName;
+        document.getElementById('lobby-title').textContent = '房間：' + roomName;
         document.getElementById('lobby-status').textContent = '等待玩家加入…';
       }
     });
   });
   ably.connection.on('failed', () => {
     clearTimeout(connTimeout);
-    document.getElementById('lobby-status').textContent = '连接失败，请刷新重试';
+    document.getElementById('lobby-status').textContent = '連接失敗，請刷新重試';
     document.getElementById('join-btn').disabled = false;
     document.getElementById('room-input').disabled = false;
-  });
-  ably.connection.on('disconnected', () => {
-    document.getElementById('lobby-status').textContent = '连接断开，重连中…';
   });
 }
 
@@ -230,6 +224,7 @@ function onPresenceChange() {
   channel.presence.get((err, members) => {
     if (err) return;
     const sorted = members.slice().sort((a,b)=>a.clientId<b.clientId?-1:1);
+    // 嚴格維護房主身份：列表裡的第一個人是唯一的 Host
     isHost = sorted.length > 0 && sorted[0].clientId === ably.options.clientId;
     renderWaiting(members.map(m=>m.clientId));
   });
@@ -249,34 +244,41 @@ function renderWaiting(ids) {
   });
   const rdyCount = Object.values(readyMap).filter(Boolean).length;
   document.getElementById('lobby-status').textContent =
-    ids.length+'/3 人在线 · '+rdyCount+'/'+ids.length+' 人已准备';
+    ids.length+'/3 人在線 · '+rdyCount+'/'+ids.length+' 人已準備';
 }
 
 function toggleReady() {
   const btn = document.getElementById('ready-btn');
   const nowReady = !readyMap[ably.options.clientId];
   readyMap[ably.options.clientId] = nowReady;
-  btn.textContent = nowReady ? '⏳ 等待其他玩家…' : '✅ 准备好了！';
+  btn.textContent = nowReady ? '⏳ 等待其他玩家…' : '✅ 準備好了！';
   nowReady ? btn.classList.add('ready') : btn.classList.remove('ready');
   
-  // 先更新本地，再广播
+  // 廣播給所有人更新自己的 ready 狀態
   channel.publish('ready', { id: ably.options.clientId, ready: nowReady });
-  checkAllReady();
+  
+  // 房主本地自我檢查
+  if (isHost) {
+    checkAllReady();
+  }
 }
 
-// 核心修复：检查逻辑严密化，确保每个人都能正确检索到所有人的 ready 状态
+// 核心重構：只有房主有權限調用此函數，滿足條件直接下達強制開始指令
 function checkAllReady() {
+  if (!isHost) return;
   channel.presence.get((err, members) => {
     if (err || members.length < 2) return;
     const allReady = members.every(m => readyMap[m.clientId] === true);
     if (allReady && !gameStarted) {
-      gameStarted = true;
-      startCountdown(); 
+      // 房主廣播強制命令：所有人給我開始倒計時！
+      channel.publish('start-game-signal', {});
     }
   });
 }
 
 function startCountdown() {
+  if (gameStarted) return;
+  gameStarted = true;
   document.getElementById('lobby').style.display='none';
   document.getElementById('countdown-screen').style.display='flex';
   let n=3;
@@ -287,7 +289,8 @@ function startCountdown() {
       clearInterval(iv);
       document.getElementById('countdown-screen').style.display='none';
       if (isHost) {
-        setTimeout(() => { sendInit(); }, 300); // 稍微拉长到300ms，确保环境绝对安全
+        // 倒計時完全結束後，由房主生成地圖數據並廣播
+        setTimeout(() => { sendInit(); }, 150);
       }
     } else {
       document.getElementById('countdown-num').textContent=n;
@@ -301,9 +304,14 @@ function handleMsg(msg) {
     channel.presence.get((err,members)=>{ 
       if(!err) {
         renderWaiting(members.map(m=>m.clientId));
-        checkAllReady(); // 关键修复点：收到别人的 ready 广播后，也要立刻在本地触发一遍全员就绪检测！
+        // 關鍵重構：非房主收到 ready 消息只刷新 UI，只有房主去判定是否該下達開始命令
+        if (isHost) checkAllReady();
       } 
     });
+  }
+  // 所有人收到這個命令，百分之百同步進入倒計時
+  if (msg.name === 'start-game-signal') {
+    startCountdown();
   }
   if (msg.name === 'init-game') {
     applyInit(msg.data);
@@ -478,7 +486,7 @@ function draw(){
     ctx.strokeStyle=PRING[i];ctx.lineWidth=2;ctx.setLineDash([6,5]);ctx.stroke();ctx.setLineDash([]);
     ctx.font='bold 11px Segoe UI';ctx.textAlign='center';ctx.fillStyle=PC[i];
     const pname=players[i]?players[i].name:'P'+(i+1);
-    ctx.fillText(pname+' 收纳点',b.x,b.y+BASE_R+14);
+    ctx.fillText(pname+' 收納點',b.x,b.y+BASE_R+14);
     ctx.restore();
   });
 
@@ -507,7 +515,7 @@ function draw(){
 
 function showWin(name){
   gameOver=true;
-  document.getElementById('win-text').textContent='🏆 '+name+' 获胜！';
+  document.getElementById('win-text').textContent='🏆 '+name+' 獲勝！';
   document.getElementById('win-overlay').classList.add('show');
 }
 
@@ -519,9 +527,9 @@ function copyLink(){
     ta.value=url;ta.style.cssText='position:fixed;top:0;left:0;opacity:0;';
     document.body.appendChild(ta);ta.focus();ta.select();
     document.execCommand('copy');document.body.removeChild(ta);
-    btn.textContent='✅ 已复制';btn.classList.add('copied');
-    setTimeout(()=>{btn.textContent='复制链接';btn.classList.remove('copied');},2000);
-  }catch(e){ prompt('请手动复制链接：',url); }
+    btn.textContent='✅ 已複製';btn.classList.add('copied');
+    setTimeout(()=>{btn.textContent='複製鏈接';btn.classList.remove('copied');},2000);
+  }catch(e){ prompt('請手動複製鏈接：',url); }
 }
 
 document.addEventListener('keydown',e=>{
