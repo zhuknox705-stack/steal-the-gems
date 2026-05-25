@@ -125,4 +125,418 @@ canvas { display:block; border-radius:12px; border:1px solid #2a2f42; cursor:cro
     <span class="pill" id="pill2" style="background:#3a1a0a;color:#fb923c;border:1px solid #ea580c88">P3: 0/3</span>
   </div>
   <canvas id="gc" width="620" height="520"></canvas>
-  <div id="hint">
+  <div id="hint">WASD 移动 · 按住鼠标左键靠近宝石拾取 · 松开放下 · 可偷别人收纳点里的宝石！</div>
+</div>
+
+<div id="win-overlay">
+  <div id="win-text">🏆 获胜！</div>
+  <button id="play-again-btn" onclick="location.reload()">再来一局</button>
+</div>
+
+<script>
+const ABLY_KEY = '77kKvQ.lP_gZg:VdQR6rg-gWPQA1JCK6Edgjt07SQgJ8MvxT_XM5BfvZc';
+const WIN=3, SPEED=2.6, PICK_R=36, BASE_R=44, W=620, H=520;
+const PC=['#a78bfa','#34d399','#fb923c'];
+const PBG=['rgba(124,58,237,0.18)','rgba(5,150,105,0.18)','rgba(234,88,12,0.18)'];
+const PRING=['#7c3aed','#059669','#ea580c'];
+const GEM_COLS=['#e879f9','#67e8f9','#fde68a','#86efac','#fca5a5','#c4b5fd','#fdba74','#a5f3fc'];
+const BASES=[{x:80,y:80},{x:540,y:80},{x:310,y:460}];
+const STARTS=[{x:80,y:150},{x:540,y:150},{x:310,y:390}];
+const GPOS=[{x:310,y:190},{x:240,y:230},{x:380,y:230},{x:180,y:270},{x:310,y:270},{x:440,y:270},{x:240,y:320},{x:380,y:320},{x:310,y:355}];
+
+let ably,channel,myId,myIdx=-1,roomName='';
+let players=[],gems=[],readyMap={},gameStarted=false,gameOver=false;
+let keys={},mouseDown=false,prevMouse=false;
+let canvas,ctx,isHost=false;
+
+function getRoomFromUrl() {
+  try {
+    const p = new URLSearchParams(location.search);
+    if (p.get('room')) return p.get('room');
+  } catch(e){}
+  try {
+    const h = location.hash.replace('#','');
+    if (h) return decodeURIComponent(h);
+  } catch(e){}
+  return null;
+}
+
+window.addEventListener('load', () => {
+  const r = getRoomFromUrl();
+  if (r) {
+    document.getElementById('room-input').value = r;
+    joinRoom();
+  }
+  document.getElementById('room-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') joinRoom();
+  });
+});
+
+function getShareUrl(room) {
+  const base = location.href.split('?')[0].split('#')[0];
+  return base + '#' + encodeURIComponent(room);
+}
+
+function joinRoom() {
+  const input = document.getElementById('room-input').value.trim();
+  if (!input) return;
+  roomName = input;
+  document.getElementById('join-btn').disabled = true;
+  document.getElementById('room-input').disabled = true;
+  document.getElementById('lobby-status').textContent = '连接中…';
+
+  const shareUrl = getShareUrl(roomName);
+  document.getElementById('share-link').textContent = shareUrl;
+  document.getElementById('share-row').style.display = 'flex';
+
+  ably = new Ably.Realtime({ key: ABLY_KEY, clientId: 'u_'+Math.random().toString(36).slice(2,10) });
+
+  const connTimeout = setTimeout(() => {
+    if (ably.connection.state !== 'connected') {
+      document.getElementById('lobby-status').textContent =
+        '⚠️ 连接超时，请尝试直接用浏览器打开游戏链接';
+    }
+  }, 8000);
+
+  ably.connection.on('connecting', () => {
+    document.getElementById('lobby-status').textContent = '连接中（connecting）…';
+  });
+  ably.connection.on('connected', () => {
+    clearTimeout(connTimeout);
+    myId = ably.options.clientId;
+    channel = ably.channels.get('gems-v2-' + roomName);
+    channel.presence.subscribe(onPresenceChange);
+    channel.subscribe(handleMsg);
+    channel.presence.enter({}, err => {
+      if (!err) {
+        document.getElementById('ready-btn').style.display = 'block';
+        document.getElementById('lobby-title').textContent = '房间：' + roomName;
+        document.getElementById('lobby-status').textContent = '等待玩家加入…';
+      }
+    });
+  });
+  ably.connection.on('failed', () => {
+    clearTimeout(connTimeout);
+    document.getElementById('lobby-status').textContent = '连接失败，请刷新重试';
+    document.getElementById('join-btn').disabled = false;
+    document.getElementById('room-input').disabled = false;
+  });
+  ably.connection.on('disconnected', () => {
+    document.getElementById('lobby-status').textContent = '连接断开，重连中…';
+  });
+}
+
+function onPresenceChange() {
+  channel.presence.get((err, members) => {
+    if (err) return;
+    const sorted = members.slice().sort((a,b)=>a.clientId<b.clientId?-1:1);
+    isHost = sorted.length > 0 && sorted[0].clientId === ably.options.clientId;
+    renderWaiting(members.map(m=>m.clientId));
+  });
+}
+
+function renderWaiting(ids) {
+  const el = document.getElementById('players-waiting');
+  el.innerHTML = '';
+  ids.forEach((id,i) => {
+    const badge = document.createElement('span');
+    badge.className = 'player-badge';
+    badge.style.background = ['#2d1f5e','#0d3320','#3a1a0a'][i]||'#222';
+    badge.style.color = ['#c4b5fd','#34d399','#fb923c'][i]||'#aaa';
+    const rdy = readyMap[id];
+    badge.textContent = 'P'+(i+1) + (id===ably.options.clientId?' (你)':'') + (rdy?' ✅':' …');
+    el.appendChild(badge);
+  });
+  const rdyCount = Object.values(readyMap).filter(Boolean).length;
+  document.getElementById('lobby-status').textContent =
+    ids.length+'/3 人在线 · '+rdyCount+'/'+ids.length+' 人已准备';
+}
+
+function toggleReady() {
+  const btn = document.getElementById('ready-btn');
+  const nowReady = !readyMap[ably.options.clientId];
+  readyMap[ably.options.clientId] = nowReady;
+  btn.textContent = nowReady ? '⏳ 等待其他玩家…' : '✅ 准备好了！';
+  nowReady ? btn.classList.add('ready') : btn.classList.remove('ready');
+  
+  // 先更新本地，再广播
+  channel.publish('ready', { id: ably.options.clientId, ready: nowReady });
+  checkAllReady();
+}
+
+// 核心修复：检查逻辑严密化，确保每个人都能正确检索到所有人的 ready 状态
+function checkAllReady() {
+  channel.presence.get((err, members) => {
+    if (err || members.length < 2) return;
+    const allReady = members.every(m => readyMap[m.clientId] === true);
+    if (allReady && !gameStarted) {
+      gameStarted = true;
+      startCountdown(); 
+    }
+  });
+}
+
+function startCountdown() {
+  document.getElementById('lobby').style.display='none';
+  document.getElementById('countdown-screen').style.display='flex';
+  let n=3;
+  document.getElementById('countdown-num').textContent=n;
+  const iv=setInterval(()=>{
+    n--;
+    if (n<=0) {
+      clearInterval(iv);
+      document.getElementById('countdown-screen').style.display='none';
+      if (isHost) {
+        setTimeout(() => { sendInit(); }, 300); // 稍微拉长到300ms，确保环境绝对安全
+      }
+    } else {
+      document.getElementById('countdown-num').textContent=n;
+    }
+  },1000);
+}
+
+function handleMsg(msg) {
+  if (msg.name === 'ready') {
+    readyMap[msg.data.id] = msg.data.ready;
+    channel.presence.get((err,members)=>{ 
+      if(!err) {
+        renderWaiting(members.map(m=>m.clientId));
+        checkAllReady(); // 关键修复点：收到别人的 ready 广播后，也要立刻在本地触发一遍全员就绪检测！
+      } 
+    });
+  }
+  if (msg.name === 'init-game') {
+    applyInit(msg.data);
+  }
+  if (msg.name === 'sync') {
+    if (!players.length) return;
+    const p = players.find(x=>x.id===msg.data.id);
+    if (p) { p.x=msg.data.x; p.y=msg.data.y; }
+  }
+  if (msg.name === 'pickup') {
+    const gi=msg.data.gemIdx, pid=msg.data.id;
+    const pIdx=players.findIndex(x=>x.id===pid);
+    if (pIdx<0) return;
+    const g=gems[gi]; if(!g||g.held) return;
+    if (g.deposited) { players[g.ownerIdx].score=Math.max(0,players[g.ownerIdx].score-1); g.deposited=false; g.ownerIdx=-1; }
+    g.held=true; g.holderIdx=pIdx; players[pIdx].heldGemIdx=gi;
+    updateScoreUI();
+  }
+  if (msg.name === 'drop') {
+    const pid=msg.data.id, pIdx=players.findIndex(x=>x.id===pid);
+    if (pIdx<0) return;
+    const p=players[pIdx], gi=p.heldGemIdx; if(gi<0) return;
+    const g=gems[gi];
+    g.held=false; g.holderIdx=-1; p.heldGemIdx=-1;
+    if (msg.data.atBase) {
+      g.x=msg.data.gx; g.y=msg.data.gy; g.deposited=true; g.ownerIdx=pIdx;
+      p.score++; updateScoreUI();
+      if (p.score>=WIN) showWin(p.name);
+    } else { g.x=p.x; g.y=p.y; }
+  }
+}
+
+function sendInit() {
+  channel.presence.get((err,members)=>{
+    if (err) return;
+    const sorted = members.slice().sort((a,b)=>a.clientId<b.clientId?-1:1);
+    const ids = sorted.map(m=>m.clientId);
+    const initPlayers = ids.map((id,i)=>({
+      id, name:'P'+(i+1), x:STARTS[i].x, y:STARTS[i].y,
+      score:0, heldGemIdx:-1, colorIdx:i,
+    }));
+    const initGems = GPOS.map((p,i)=>({
+      x:p.x,y:p.y,held:false,holderIdx:-1,deposited:false,ownerIdx:-1,
+      color:GEM_COLS[i%GEM_COLS.length],
+    }));
+    channel.publish('init-game', { players:initPlayers, gems:initGems });
+  });
+}
+
+function applyInit(data) {
+  players=data.players; gems=data.gems;
+  myIdx=players.findIndex(p=>p.id===ably.options.clientId);
+  document.getElementById('game-screen').style.display='flex';
+  canvas=document.getElementById('gc'); ctx=canvas.getContext('2d');
+  updateScoreUI();
+  
+  canvas.removeEventListener('mousedown', onMouseDown);
+  canvas.removeEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('mousedown', onMouseDown);
+  canvas.addEventListener('mouseup', onMouseUp);
+  
+  requestAnimationFrame(gameLoop);
+}
+
+function onMouseDown(e){ if(e.button===0) mouseDown=true; }
+function onMouseUp(e){ if(e.button===0) mouseDown=false; }
+
+function updateScoreUI() {
+  players.forEach((p,i)=>{
+    const el=document.getElementById('pill'+i);
+    if(el){ el.textContent=p.name+(i===myIdx?' (你)':'')+': '+p.score+'/'+WIN; }
+  });
+  for(let i=players.length;i<3;i++){ const el=document.getElementById('pill'+i); if(el) el.style.display='none'; }
+}
+
+function nearestPickupable() {
+  if (myIdx<0) return null;
+  const me=players[myIdx];
+  let best=null,bestD=9999;
+  gems.forEach((g,i)=>{
+    if(g.held) return;
+    if(g.deposited){
+      if(g.ownerIdx===myIdx) return;
+      const base=BASES[g.ownerIdx];
+      const d=Math.hypot(me.x-base.x,me.y-base.y);
+      if(d<BASE_R+8&&d<bestD){best=i;bestD=d;}
+    } else {
+      const d=Math.hypot(me.x-g.x,me.y-g.y);
+      if(d<PICK_R&&d<bestD){best=i;bestD=d;}
+    }
+  });
+  return best;
+}
+
+let lastSX=-1,lastSY=-1;
+
+function gameLoop() {
+  if (!gameOver && myIdx>=0 && players[myIdx]) {
+    const me=players[myIdx];
+    let dx=0,dy=0;
+    if(keys['w']||keys['arrowup'])    dy-=SPEED;
+    if(keys['s']||keys['arrowdown'])  dy+=SPEED;
+    if(keys['a']||keys['arrowleft'])  dx-=SPEED;
+    if(keys['d']||keys['arrowright']) dx+=SPEED;
+    if(dx&&dy){dx*=0.707;dy*=0.707;}
+    me.x=Math.max(14,Math.min(W-14,me.x+dx));
+    me.y=Math.max(14,Math.min(H-14,me.y+dy));
+
+    if(Math.abs(me.x-lastSX)>1||Math.abs(me.y-lastSY)>1){
+      channel.publish('sync',{id:ably.options.clientId,x:me.x,y:me.y});
+      lastSX=me.x;lastSY=me.y;
+    }
+    if(me.heldGemIdx>=0){ gems[me.heldGemIdx].x=me.x; gems[me.heldGemIdx].y=me.y-22; }
+
+    if(mouseDown&&!prevMouse){
+      const gi=nearestPickupable();
+      if(gi!==null&&me.heldGemIdx<0){
+        const g=gems[gi];
+        if(g.deposited){ players[g.ownerIdx].score=Math.max(0,players[g.ownerIdx].score-1); g.deposited=false; g.ownerIdx=-1; }
+        g.held=true; g.holderIdx=myIdx; me.heldGemIdx=gi;
+        channel.publish('pickup',{id:ably.options.clientId,gemIdx:gi});
+        updateScoreUI();
+      }
+    }
+    if(!mouseDown&&prevMouse&&me.heldGemIdx>=0){
+      const gi=me.heldGemIdx,g=gems[gi];
+      const base=BASES[myIdx],d=Math.hypot(me.x-base.x,me.y-base.y);
+      const atBase=d<BASE_R;
+      let gx=me.x,gy=me.y;
+      if(atBase){
+        const placed=gems.filter(x=>x.deposited&&x.ownerIdx===myIdx).length;
+        gx=base.x+(placed%3-1)*18; gy=base.y+(Math.floor(placed/3)-0.5)*18;
+        g.x=gx;g.y=gy;g.deposited=true;g.ownerIdx=myIdx;
+        me.score++;updateScoreUI();
+        if(me.score>=WIN) showWin(me.name);
+      } else { g.x=me.x;g.y=me.y; }
+      g.held=false;g.holderIdx=-1;me.heldGemIdx=-1;
+      channel.publish('drop',{id:ably.options.clientId,atBase,gx,gy});
+    }
+    prevMouse=mouseDown;
+  }
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function drawGem(x,y,col,size){
+  ctx.save();ctx.translate(x,y);
+  ctx.beginPath();
+  ctx.moveTo(0,-size*1.1);ctx.lineTo(size*.75,-size*.15);
+  ctx.lineTo(size*.55,size*.9);ctx.lineTo(-size*.55,size*.9);
+  ctx.lineTo(-size*.75,-size*.15);ctx.closePath();
+  ctx.fillStyle=col;ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.45)';ctx.lineWidth=1;ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-size*.2,-size*.8);ctx.lineTo(size*.15,-size*.4);
+  ctx.strokeStyle='rgba(255,255,255,0.6)';ctx.lineWidth=1.5;ctx.stroke();
+  ctx.restore();
+}
+
+function draw(){
+  if(!ctx) return;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#111827';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#1e2535';ctx.lineWidth=1;
+  for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+  players.forEach((_,i)=>{
+    const b=BASES[i];
+    ctx.save();
+    ctx.beginPath();ctx.arc(b.x,b.y,BASE_R,0,Math.PI*2);
+    ctx.fillStyle=PBG[i];ctx.fill();
+    ctx.strokeStyle=PRING[i];ctx.lineWidth=2;ctx.setLineDash([6,5]);ctx.stroke();ctx.setLineDash([]);
+    ctx.font='bold 11px Segoe UI';ctx.textAlign='center';ctx.fillStyle=PC[i];
+    const pname=players[i]?players[i].name:'P'+(i+1);
+    ctx.fillText(pname+' 收纳点',b.x,b.y+BASE_R+14);
+    ctx.restore();
+  });
+
+  gems.forEach(g=>{ if(!g.held) drawGem(g.x,g.y,g.color,9); });
+
+  if(myIdx>=0&&players[myIdx]){
+    const me=players[myIdx];
+    ctx.save();ctx.beginPath();ctx.arc(me.x,me.y,PICK_R,0,Math.PI*2);
+    ctx.strokeStyle='rgba(255,255,255,0.07)';ctx.lineWidth=1;ctx.stroke();ctx.restore();
+  }
+
+  players.forEach((p,i)=>{
+    ctx.save();
+    ctx.beginPath();ctx.ellipse(p.x,p.y+15,11,4,0,0,Math.PI*2);
+    ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fill();
+    ctx.beginPath();ctx.arc(p.x,p.y,15,0,Math.PI*2);
+    ctx.fillStyle=PC[i];ctx.fill();
+    ctx.strokeStyle=i===myIdx?'#fff':'rgba(255,255,255,0.5)';
+    ctx.lineWidth=i===myIdx?2.5:1.5;ctx.stroke();
+    ctx.font='bold 9px Segoe UI';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillStyle='#0d1117';ctx.fillText(p.name,p.x,p.y);
+    if(p.heldGemIdx>=0) drawGem(p.x,p.y-22,gems[p.heldGemIdx].color,7);
+    ctx.restore();
+  });
+}
+
+function showWin(name){
+  gameOver=true;
+  document.getElementById('win-text').textContent='🏆 '+name+' 获胜！';
+  document.getElementById('win-overlay').classList.add('show');
+}
+
+function copyLink(){
+  const url=document.getElementById('share-link').textContent;
+  const btn=document.getElementById('copy-btn');
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=url;ta.style.cssText='position:fixed;top:0;left:0;opacity:0;';
+    document.body.appendChild(ta);ta.focus();ta.select();
+    document.execCommand('copy');document.body.removeChild(ta);
+    btn.textContent='✅ 已复制';btn.classList.add('copied');
+    setTimeout(()=>{btn.textContent='复制链接';btn.classList.remove('copied');},2000);
+  }catch(e){ prompt('请手动复制链接：',url); }
+}
+
+document.addEventListener('keydown',e=>{
+  if (!e.key) return;
+  const key = e.key.toLowerCase();
+  keys[key] = true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(key)) {
+    e.preventDefault();
+  }
+});
+
+document.addEventListener('keyup',e=>{
+  if (!e.key) return;
+  keys[e.key.toLowerCase()] = false;
+});
+</script>
+</body>
+</html>
