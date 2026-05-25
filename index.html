@@ -2,56 +2,51 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>4myfriend</title>
-    <script src="https://imgcache.qq.com/qcloud/cloudbase-js-sdk/2.9.0/cloudbase.full.js" crossorigin="anonymous"></script>
     <style>
         body { background:#0d1117; color:#e0e0e0; display:flex; justify-content:center; align-items:center; height:100vh; margin:0; font-family:sans-serif; }
         #lobby { background:#161b27; padding:30px; border-radius:15px; text-align:center; box-shadow:0 4px 15px rgba(0,0,0,0.5); }
     </style>
 </head>
 <body>
-
     <div id="lobby">
-        <h2 id="lobby-status">正在连接云端引擎...</h2>
+        <h2 id="lobby-status">正在直接连线云端...</h2>
     </div>
 
     <script>
-        const ENV_ID = 'gameroom-d3g19ov6pa4df5db7';
-
-        function initApp() {
-            // 检查 SDK 是否存在
-            if (typeof cloudbase === 'undefined') {
-                document.getElementById('lobby-status').innerText = "SDK 加载失败，请检查网络";
-                return;
-            }
-
-            // 初始化
-            const app = cloudbase.init({ env: ENV_ID });
-            window.db = app.database();
+        // 如果你的腾讯云环境开启了“静态网站托管 SDK 注入”，这行代码会自动生效
+        // 如果它依然报 cloudbase 未定义，说明你需要使用最底层的 REST API
+        
+        async function connectByRest() {
+            const ENV_ID = 'gameroom-d3g19ov6pa4df5db7';
+            const url = `https://${ENV_ID}.service.tcloudbase.com/api`;
             
-            // 匿名登录以获取权限
-            app.auth().signInAnonymously()
-                .then(() => {
-                    document.getElementById('lobby-status').innerText = "连线成功！可以开始游戏了";
-                    console.log("初始化完成");
-                })
-                .catch(err => {
-                    document.getElementById('lobby-status').innerText = "登录失败: " + err.message;
+            document.getElementById('lobby-status').innerText = "尝试绕过 SDK 直接通信...";
+            
+            try {
+                // 使用原生 fetch 进行 HTTP 请求，彻底避开 CORS 和 SDK 注入问题
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        action: 'database.query', 
+                        collection: 'game_rooms',
+                        query: {} 
+                    })
                 });
+                
+                if (response.ok) {
+                    document.getElementById('lobby-status').innerText = "连线成功！可以直接开始游戏了";
+                    console.log("⚡ 直接 API 通信握手成功");
+                } else {
+                    document.getElementById('lobby-status').innerText = "连接被拒绝，请检查数据库读写权限";
+                }
+            } catch (e) {
+                document.getElementById('lobby-status').innerText = "连接错误: " + e.message;
+            }
         }
 
-        // 轮询检查 SDK 是否就绪
-        let checkCount = 0;
-        const interval = setInterval(() => {
-            if (typeof cloudbase !== 'undefined') {
-                clearInterval(interval);
-                initApp();
-            } else if (checkCount++ > 50) {
-                clearInterval(interval);
-                document.getElementById('lobby-status').innerText = "SDK 加载超时";
-            }
-        }, 100);
+        window.onload = connectByRest;
     </script>
 </body>
 </html>
