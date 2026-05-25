@@ -146,8 +146,10 @@ const GPOS=[{x:310,y:190},{x:240,y:230},{x:380,y:230},{x:180,y:270},{x:310,y:270
 
 let ably,channel,myId,myIdx=-1,roomName='';
 let players=[],gems=[],readyMap={},gameStarted=false,gameOver=false;
-let keys={},mouseDown=false,prevMouse=false;
+let keys={'w':false,'s':false,'a':false,'d':false,'arrowup':false,'arrowdown':false,'arrowleft':false,'arrowright':false};
+let mouseDown=false,prevMouse=false;
 let canvas,ctx,isHost=false;
+let cachedGameData=null; // 快取房主生成的遊戲數據
 
 function getRoomFromUrl() {
   try {
@@ -193,15 +195,14 @@ function joinRoom() {
 
   const connTimeout = setTimeout(() => {
     if (ably.connection.state !== 'connected') {
-      document.getElementById('lobby-status').textContent =
-        '⚠️ 連接超時，請嘗試刷新網頁或更換房間名';
+      document.getElementById('lobby-status').textContent = '⚠️ 連接超時，請嘗試刷新網頁';
     }
   }, 8000);
 
   ably.connection.on('connected', () => {
     clearTimeout(connTimeout);
     myId = ably.options.clientId;
-    channel = ably.channels.get('gems-v3-' + roomName);
+    channel = ably.channels.get('gems-v4-' + roomName);
     channel.presence.subscribe(onPresenceChange);
     channel.subscribe(handleMsg);
     channel.presence.enter({}, err => {
@@ -212,21 +213,22 @@ function joinRoom() {
       }
     });
   });
-  ably.connection.on('failed', () => {
-    clearTimeout(connTimeout);
-    document.getElementById('lobby-status').textContent = '連接失敗，請刷新重試';
-    document.getElementById('join-btn').disabled = false;
-    document.getElementById('room-input').disabled = false;
-  });
 }
 
 function onPresenceChange() {
   channel.presence.get((err, members) => {
     if (err) return;
     const sorted = members.slice().sort((a,b)=>a.clientId<b.clientId?-1:1);
-    // 嚴格維護房主身份：列表裡的第一個人是唯一的 Host
     isHost = sorted.length > 0 && sorted[0].clientId === ably.options.clientId;
-    renderWaiting(members.map(m=>m.clientId));
+    
+    // 清理已經離開房間的玩家的準備狀態
+    const currentIds = members.map(m => m.clientId);
+    Object.keys(readyMap).forEach(id => {
+      if (!currentIds.includes(id)) delete readyMap[id];
+    });
+
+    renderWaiting(currentIds);
+    if (isHost) checkAllReady();
   });
 }
 
@@ -254,31 +256,35 @@ function toggleReady() {
   btn.textContent = nowReady ? '⏳ 等待其他玩家…' : '✅ 準備好了！';
   nowReady ? btn.classList.add('ready') : btn.classList.remove('ready');
   
-  // 廣播給所有人更新自己的 ready 狀態
   channel.publish('ready', { id: ably.options.clientId, ready: nowReady });
-  
-  // 房主本地自我檢查
-  if (isHost) {
-    checkAllReady();
-  }
+  if (isHost) checkAllReady();
 }
 
-// 核心重構：只有房主有權限調用此函數，滿足條件直接下達強制開始指令
 function checkAllReady() {
   if (!isHost) return;
   channel.presence.get((err, members) => {
     if (err || members.length < 2) return;
     const allReady = members.every(m => readyMap[m.clientId] === true);
     if (allReady && !gameStarted) {
-      // 房主廣播強制命令：所有人給我開始倒計時！
-      channel.publish('start-game-signal', {});
+      // 房主直接在這裡把地圖和角色初始數據全部算好
+      const sorted = members.slice().sort((a,b)=>a.clientId<b.clientId?-1:1);
+      const ids = sorted.map(m=>m.clientId);
+      const initPlayers = ids.map((id,i)=>({
+        id, name:'P'+(i+1), x:STARTS[i].x, y:STARTS[i].y,
+        score:0, heldGemIdx:-1, colorIdx:i,
+      }));
+      const initGems = GPOS.map((p,i)=>({
+        x:p.x,y:p.y,held:false,holderIdx:-1,deposited:false,ownerIdx:-1,
+        color:GEM_COLS[i%GEM_COLS.length],
+      }));
+
+      // 一把打包，發送「強制同步開始命令」
+      channel.publish('start-game-sync', { players: initPlayers, gems: initGems });
     }
   });
 }
 
 function startCountdown() {
-  if (gameStarted) return;
-  gameStarted = true;
   document.getElementById('lobby').style.display='none';
   document.getElementById('countdown-screen').style.display='flex';
   let n=3;
@@ -288,10 +294,8 @@ function startCountdown() {
     if (n<=0) {
       clearInterval(iv);
       document.getElementById('countdown-screen').style.display='none';
-      if (isHost) {
-        // 倒計時完全結束後，由房主生成地圖數據並廣播
-        setTimeout(() => { sendInit(); }, 150);
-      }
+      // 倒計時結束，大家100%擁有快取數據，直接進入遊戲畫面
+      applyInit(cachedGameData);
     } else {
       document.getElementById('countdown-num').textContent=n;
     }
@@ -304,17 +308,15 @@ function handleMsg(msg) {
     channel.presence.get((err,members)=>{ 
       if(!err) {
         renderWaiting(members.map(m=>m.clientId));
-        // 關鍵重構：非房主收到 ready 消息只刷新 UI，只有房主去判定是否該下達開始命令
-        if (isHost) checkAllReady();
+        if (isHost) checkAllReady(); 
       } 
     });
   }
-  // 所有人收到這個命令，百分之百同步進入倒計時
-  if (msg.name === 'start-game-signal') {
+  // 核心修復：所有人同步收到信號、同時快取數據、同時開始倒計時
+  if (msg.name === 'start-game-sync' && !gameStarted) {
+    gameStarted = true;
+    cachedGameData = msg.data; 
     startCountdown();
-  }
-  if (msg.name === 'init-game') {
-    applyInit(msg.data);
   }
   if (msg.name === 'sync') {
     if (!players.length) return;
@@ -344,40 +346,20 @@ function handleMsg(msg) {
   }
 }
 
-function sendInit() {
-  channel.presence.get((err,members)=>{
-    if (err) return;
-    const sorted = members.slice().sort((a,b)=>a.clientId<b.clientId?-1:1);
-    const ids = sorted.map(m=>m.clientId);
-    const initPlayers = ids.map((id,i)=>({
-      id, name:'P'+(i+1), x:STARTS[i].x, y:STARTS[i].y,
-      score:0, heldGemIdx:-1, colorIdx:i,
-    }));
-    const initGems = GPOS.map((p,i)=>({
-      x:p.x,y:p.y,held:false,holderIdx:-1,deposited:false,ownerIdx:-1,
-      color:GEM_COLS[i%GEM_COLS.length],
-    }));
-    channel.publish('init-game', { players:initPlayers, gems:initGems });
-  });
-}
-
 function applyInit(data) {
+  if (!data) return;
   players=data.players; gems=data.gems;
   myIdx=players.findIndex(p=>p.id===ably.options.clientId);
   document.getElementById('game-screen').style.display='flex';
   canvas=document.getElementById('gc'); ctx=canvas.getContext('2d');
   updateScoreUI();
   
-  canvas.removeEventListener('mousedown', onMouseDown);
-  canvas.removeEventListener('mouseup', onMouseUp);
-  canvas.addEventListener('mousedown', onMouseDown);
-  canvas.addEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('mousedown',e=>{ if(e.button===0) mouseDown=true; });
+  canvas.addEventListener('mouseup',  e=>{ if(e.button===0) mouseDown=false; });
+  canvas.addEventListener('mouseleave',()=>{ mouseDown=false; });
   
   requestAnimationFrame(gameLoop);
 }
-
-function onMouseDown(e){ if(e.button===0) mouseDown=true; }
-function onMouseUp(e){ if(e.button===0) mouseDown=false; }
 
 function updateScoreUI() {
   players.forEach((p,i)=>{
