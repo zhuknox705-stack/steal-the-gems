@@ -2,8 +2,10 @@
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<title>4myfriend - 騰訊雲免域名版</title>
-<script src="https://imgcache.qq.com/qcloud/cloudbase-js-sdk/1.6.0/cloudbase.full.js"></script>
+<title>4myfriend - 騰訊雲穩定版</title>
+
+<script src="https://cdn.bootcdn.net/ajax/libs/cloudbase-js-sdk/1.6.0/cloudbase.full.js"></script>
+
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body {
@@ -69,4 +71,84 @@ h1 { font-size:22px; font-weight:700; letter-spacing:3px; margin-bottom:14px; co
 #ready-btn.ready { background:#1e2535; color:#6b7280; }
 
 #countdown-screen {
-  display:none; flex-direction:
+  display:none; flex-direction:column;
+  align-items:center; justify-content:center; gap:12px;
+}
+#countdown-num { font-size:100px; font-weight:700; color:#fff; line-height:1; }
+#countdown-label { font-size:18px; color:#888; }
+
+#game-screen { display:none; flex-direction:column; align-items:center; }
+#score-bar { display:flex; gap:14px; margin-bottom:10px; }
+.pill { padding:4px 16px; border-radius:99px; font-size:13px; font-weight:600; }
+canvas { display:block; border-radius:12px; border:1px solid #2a2f42; cursor:crosshair; }
+#hint { margin-top:8px; font-size:12px; color:#444; text-align:center; }
+
+#win-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,0.78);
+  display:none; align-items:center; justify-content:center;
+  flex-direction:column; gap:20px; z-index:20;
+}
+#win-overlay.show { display:flex; }
+#win-text { font-size:34px; font-weight:700; color:#fff; }
+#play-again-btn {
+  padding:12px 32px; background:#fff; color:#0d1117;
+  border:none; border-radius:99px; font-size:16px; font-weight:600; cursor:pointer;
+}
+#play-again-btn:hover { background:#ddd; }
+</style>
+</head>
+<body>
+<h1>4myfriend</h1>
+
+<div id="lobby">
+  <h2 id="lobby-title">創建或加入房間</h2>
+  <div id="room-row">
+    <input id="room-input" placeholder="輸入房間名…" maxlength="20" />
+    <button class="btn" id="join-btn" onclick="joinRoom()">加入</button>
+  </div>
+  <div id="share-row">
+    <span id="share-link"></span>
+    <button id="copy-btn" onclick="copyLink()">複製連結</button>
+  </div>
+  <div id="players-waiting"></div>
+  <div id="lobby-status">輸入房間名後加入</div>
+  <button id="ready-btn" onclick="toggleReady()">✅ 準備好了！</button>
+</div>
+
+<div id="countdown-screen">
+  <div id="countdown-num">3</div>
+  <div id="countdown-label">遊戲即將開始…</div>
+</div>
+
+<div id="game-screen">
+  <div id="score-bar">
+    <span class="pill" id="pill0" style="background:#2d1f5e;color:#c4b5fd;border:1px solid #7c3aed44">P1: 0/3</span>
+    <span class="pill" id="pill1" style="background:#0d3320;color:#34d399;border:1px solid #05966988">P2: 0/3</span>
+    <span class="pill" id="pill2" style="background:#3a1a0a;color:#fb923c;border:1px solid #ea580c88">P3: 0/3</span>
+  </div>
+  <canvas id="gc" width="620" height="520"></canvas>
+  <div id="hint">WASD 移動 · 按住滑鼠左鍵靠近寶石拾取 · 鬆開放下 · 可偷別人收納點裡的寶石！</div>
+</div>
+
+<div id="win-overlay">
+  <div id="win-text">🏆 獲勝！</div>
+  <button id="play-again-btn" onclick="location.reload()">再來一局</button>
+</div>
+
+<script>
+console.log("🚀 本地 JavaScript 開始初始化...");
+
+const ENV_ID = 'gameroom-d3g19ov6pa4df5db7'; 
+
+const WIN=3, SPEED=2.6, PICK_R=36, BASE_R=44, W=620, H=520;
+const PC=['#a78bfa','#34d399','#fb923c'];
+const PBG=['rgba(124,58,237,0.18)','rgba(5,150,105,0.18)','rgba(234,88,12,0.18)'];
+const PRING=['#7c3aed','#059669','#ea580c'];
+const GEM_COLS=['#e879f9','#67e8f9','#fde68a','#86efac','#fca5a5','#c4b5fd','#fdba74','#a5f3fc'];
+const BASES=[{x:80,y:80},{x:540,y:80},{x:310,y:460}];
+const STARTS=[{x:80,y:150},{x:540,y:150},{x:310,y:390}];
+const GPOS=[{x:310,y:190},{x:240,y:230},{x:380,y:230},{x:180,y:270},{x:310,y:270},{x:440,y:270},{x:240,y:320},{x:380,y:320},{x:310,y:355}];
+
+let app, db, roomDocId = null, roomWatcher = null;
+let myId, myIdx=-1, roomName='';
+let players=[], gems=[],
