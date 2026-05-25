@@ -17,28 +17,36 @@
         <div id="lobby-status">正在載入核心引擎...</div>
         </div>
 
-    <script>
-        const ENV_ID = 'gameroom-d3g19ov6pa4df5db7';
-        
-        // 修改初始化逻辑：不再动态生成脚本，而是直接使用已经引入的 cloudbase 对象
-        function initCloudBase() {
-            try {
-                if (typeof cloudbase !== 'undefined') {
-                    const app = cloudbase.init({ env: ENV_ID });
-                    window.db = app.database();
-                    document.getElementById('lobby-status').textContent = '連線成功！可以開始遊戲了';
-                    console.log("⚡ 雲端握手成功");
-                } else {
-                    throw new Error("SDK 未定義");
-                }
-            } catch(e) {
-                console.error("雲端初始化失敗", e);
-                document.getElementById('lobby-status').textContent = '⚠️ 初始化失敗，請檢查網絡';
-            }
-        }
+ <script>
+    const ENV_ID = 'gameroom-d3g19ov6pa4df5db7'; 
 
-        // 页面加载后直接执行
-        window.onload = initCloudBase;
-    </script>
+    // 1. 定义一个轮询函数，确保 SDK 真的加载进来了再运行
+    function checkSDK() {
+        if (typeof cloudbase !== 'undefined') {
+            console.log("SDK 已就绪，开始初始化...");
+            initCloudBase();
+        } else {
+            console.log("等待 SDK 加载...");
+            setTimeout(checkSDK, 200); // 每 200ms 检查一次
+        }
+    }
+
+    function initCloudBase() {
+        try {
+            const app = cloudbase.init({
+                env: ENV_ID
+            });
+            window.db = app.database();
+            document.getElementById('lobby-status').textContent = '连线成功！';
+            console.log("⚡ 雲端握手成功");
+        } catch(e) {
+            console.error("初始化错误:", e);
+            document.getElementById('lobby-status').textContent = '初始化失败：' + e.message;
+        }
+    }
+
+    // 页面加载后立即启动探测
+    window.addEventListener('DOMContentLoaded', checkSDK);
+</script>
 </body>
 </html>
