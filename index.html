@@ -2,10 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<title>4myfriend - 騰訊雲穩定版</title>
-
-<script src="https://cdn.bootcdn.net/ajax/libs/cloudbase-js-sdk/1.6.0/cloudbase.full.js"></script>
-
+<title>4myfriend - 終極免卡死版</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body {
@@ -111,7 +108,7 @@ canvas { display:block; border-radius:12px; border:1px solid #2a2f42; cursor:cro
     <button id="copy-btn" onclick="copyLink()">複製連結</button>
   </div>
   <div id="players-waiting"></div>
-  <div id="lobby-status">輸入房間名後加入</div>
+  <div id="lobby-status">正在載入核心引擎...</div>
   <button id="ready-btn" onclick="toggleReady()">✅ 準備好了！</button>
 </div>
 
@@ -136,8 +133,6 @@ canvas { display:block; border-radius:12px; border:1px solid #2a2f42; cursor:cro
 </div>
 
 <script>
-console.log("🚀 本地 JavaScript 開始初始化...");
-
 const ENV_ID = 'gameroom-d3g19ov6pa4df5db7'; 
 
 const WIN=3, SPEED=2.6, PICK_R=36, BASE_R=44, W=620, H=520;
@@ -151,4 +146,21 @@ const GPOS=[{x:310,y:190},{x:240,y:230},{x:380,y:230},{x:180,y:270},{x:310,y:270
 
 let app, db, roomDocId = null, roomWatcher = null;
 let myId, myIdx=-1, roomName='';
-let players=[], gems=[],
+let players=[], gems=[], readyMap={}, gameStarted=false, gameOver=false;
+let keys={}, mouseDown=false, prevMouse=false;
+let canvas, ctx, isHost=false;
+let lastSX=-1, lastSY=-1;
+
+// 1. 頁面加載時立刻強制渲染基本UI，不給任何白屏的機會
+window.addEventListener('DOMContentLoaded', () => {
+  canvas = document.getElementById('gc');
+  if(canvas) ctx = canvas.getContext('2d');
+  document.getElementById('lobby-status').textContent = '輸入房間名後加入';
+  
+  // 2. 用代碼動態、安全地去請SDK，不當傳統標籤掛死瀏覽器
+  const sdk = document.createElement('script');
+  sdk.src = "https://cdn.bootcdn.net/ajax/libs/cloudbase-js-sdk/1.6.0/cloudbase.full.js";
+  sdk.onload = initCloudBase;
+  sdk.onerror = () => {
+    console.error("SDK加載徹底被網絡阻斷，切換至純單機沙盒模式");
+    document.getElementById('lobby-status').textContent = '⚠️ 網絡阻斷，已切
