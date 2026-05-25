@@ -1,6 +1,72 @@
 <!DOCTYPE html>
-<html>
-<body>
-  <h1 style="color: red; text-align: center; margin-top: 50px;">如果看見這行字，說明網頁通路完全正常！</h1>
-</body>
-</html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>4myfriend - 終極免卡死版</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#0d1117;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  min-height:100vh;
+  font-family:'Segoe UI',sans-serif;
+  color:#e0e0e0; user-select:none;
+}
+h1 { font-size:22px; font-weight:700; letter-spacing:3px; margin-bottom:14px; color:#fff; }
+
+#lobby {
+  display:flex; flex-direction:column; align-items:center; gap:14px;
+  background:#161b27; border:1px solid #2a2f42;
+  border-radius:16px; padding:32px 44px; min-width:360px;
+}
+#lobby h2 { font-size:15px; font-weight:500; color:#888; }
+#room-row { display:flex; gap:8px; width:100%; }
+#room-input {
+  flex:1; padding:10px 14px;
+  background:#0d1117; border:1px solid #2a2f42;
+  border-radius:8px; color:#fff; font-size:14px; outline:none;
+}
+#room-input:focus { border-color:#7c3aed; }
+.btn {
+  padding:10px 20px; border-radius:8px; border:none; cursor:pointer;
+  font-size:14px; font-weight:600; background:#7c3aed; color:#fff;
+  transition:background .15s;
+}
+.btn:hover { background:#6d28d9; }
+.btn:disabled { background:#2a2f42; color:#555; cursor:not-allowed; }
+
+#share-row {
+  display:none; align-items:center; gap:8px; width:100%;
+  background:#0d1117; border:1px solid #2a2f42;
+  border-radius:8px; padding:8px 12px;
+}
+#share-link {
+  flex:1; font-size:12px; color:#666;
+  overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+}
+#copy-btn {
+  flex-shrink:0; padding:5px 12px; border-radius:6px;
+  border:1px solid #2a2f42; background:#1e2535;
+  color:#aaa; font-size:12px; font-weight:600;
+  cursor:pointer; transition:all .15s; white-space:nowrap;
+}
+#copy-btn:hover { background:#2a2f42; color:#fff; }
+#copy-btn.copied { border-color:#059669; color:#34d399; }
+
+#players-waiting { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+.player-badge { padding:6px 16px; border-radius:99px; font-size:13px; font-weight:600; }
+
+#lobby-status { font-size:13px; color:#555; text-align:center; }
+
+#ready-btn {
+  display:none; width:100%; padding:12px; border-radius:8px; border:none;
+  cursor:pointer; font-size:15px; font-weight:700;
+  background:#059669; color:#fff; transition:background .15s;
+}
+#ready-btn:hover { background:#047857; }
+#ready-btn.ready { background:#1e2535; color:#6b7280; }
+
+#countdown-screen {
+  display:none; flex-direction:column;
+  align
