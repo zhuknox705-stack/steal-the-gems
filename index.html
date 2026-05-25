@@ -1,3 +1,8 @@
+<head>
+    <meta charset="UTF-8">
+    <title>4myfriend</title>
+    <script src="https://unpkg.com/tcb-js-sdk@2.9.0/dist/cloudbase.full.js"></script>
+</head>
 <!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -17,36 +22,25 @@
         <div id="lobby-status">正在載入核心引擎...</div>
         </div>
 
- <script>
+<script>
     const ENV_ID = 'gameroom-d3g19ov6pa4df5db7'; 
 
-    // 1. 定义一个轮询函数，确保 SDK 真的加载进来了再运行
-    function checkSDK() {
-        if (typeof cloudbase !== 'undefined') {
-            console.log("SDK 已就绪，开始初始化...");
-            initCloudBase();
-        } else {
-            console.log("等待 SDK 加载...");
-            setTimeout(checkSDK, 200); // 每 200ms 检查一次
-        }
-    }
-
     function initCloudBase() {
-        try {
-            const app = cloudbase.init({
-                env: ENV_ID
-            });
-            window.db = app.database();
-            document.getElementById('lobby-status').textContent = '连线成功！';
-            console.log("⚡ 雲端握手成功");
-        } catch(e) {
-            console.error("初始化错误:", e);
-            document.getElementById('lobby-status').textContent = '初始化失败：' + e.message;
+        // 检查是否已经加载成功
+        if (typeof cloudbase === 'undefined') {
+            document.getElementById('lobby-status').textContent = '⚠️ SDK 加载失败，请检查网络权限';
+            return;
         }
+
+        const app = cloudbase.init({ env: ENV_ID });
+        window.db = app.database();
+        document.getElementById('lobby-status').textContent = '连线成功！';
     }
 
-    // 页面加载后立即启动探测
-    window.addEventListener('DOMContentLoaded', checkSDK);
+    // 监听加载事件
+    window.addEventListener('load', () => {
+        setTimeout(initCloudBase, 500); // 给浏览器留一点点处理时间
+    });
 </script>
 </body>
 </html>
